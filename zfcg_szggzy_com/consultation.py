@@ -1,0 +1,95 @@
+import datetime
+import os
+import re
+import sys
+
+import feapder
+from feapder import Item
+from lxml import etree
+
+sys.path.insert(
+    0,
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+
+from crawldata_spider.tools import tools
+
+"""
+政策解读
+"""
+
+
+class AirSpiderZzgg(feapder.AirSpider):
+    def start_requests(self):
+
+        for page in range(1, 100):
+            if page == 1:
+                url = "http://zfcg.szggzy.com:8081/zcfg/list.html"
+            else:
+                url = f"http://zfcg.szggzy.com:8081/zcfg/{page}.html"
+            yield feapder.Request(url, callback=self.parse, verify=False, method="GET", request_sync=True)
+
+    def download_midware(self, request):
+        '''
+                          下载中间件
+                            :return:
+                   '''
+        request.headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Pragma": "no-cache",
+            "Referer": "http://zfcg.szggzy.com:8081/",
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
+        }
+        pro = tools.get_proxy()
+        request.proxies = pro
+        return request
+
+    def parse(self, request, response):
+        html = response.text
+        html = etree.HTML(html)
+
+        trs = html.xpath('//ul[@class="news-items"]/li')
+        for tr in trs:
+            info = {}
+            info["block"] = "政策法规"
+            info["collet_area"] = "政策法规"
+            info["plate"] = "政策资讯"
+            info["pulic_type"] = "政策资讯"
+            info["city"] = "深圳市"
+            info["field"] = "其他"
+            info["create_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            info["title"] = tr.xpath('./a/@title')[0]
+            info["file_link"] = tr.xpath('./a/@href')[0]
+            info["public_time"] = tr.xpath('./span/text()')[0].strip()
+            info["file"] = " "
+            info["money"] = " "
+            info["company"] = " "
+
+            yield feapder.Request(info["file_link"], callback=self.parse_details,
+                                  meta=info, request_sync=True)
+
+    def parse_details(self, request, response):
+        info = request.meta
+        html = response.text
+        # 信息来源
+        source = re.findall("信息来源:(.*?)</p>", html)
+        item = Item()
+        item.table_name = "consultation"  # 表名
+        item.type = "政策解读"
+        item.created_at = info["create_time"]
+        item.title = info["title"]
+        item.url = info["file_link"]
+        item.publish = info["public_time"].replace("\r", "").replace("\n", "") + " 00:00:00" if info["public_time"] else ""
+        item.content = tools.filterHtmlTag(html)
+        item.source = source[0] if source else ""
+        # print(item)
+        yield item
+
+
+if __name__ == "__main__":
+    AirSpiderZzgg(thread_count=1).start()
